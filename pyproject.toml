@@ -32,6 +32,7 @@ dependencies = [
     "renderers[multimodal]>=0.1.12.dev2",
     "pybase64>=1.4.2",
     "msgspec>=0.18",
+    "self-play-engine",
 ]
 
 [project.scripts]
@@ -300,6 +301,7 @@ flash-mla = { url = "https://github.com/NovaSky-AI/skyrl-wheels/releases/downloa
 flash-linear-attention = { git = "https://github.com/fla-org/flash-linear-attention" }
 mamba-ssm = { git = "https://github.com/state-spaces/mamba", rev = "f577286" }
 flash_attn_3 = { index = "pytorch-cu130-test" }
+self-play-engine = { path = "../", editable = true }
 
 [tool.uv.extra-build-dependencies]
 flash-attn = [{ requirement = "torch", match-runtime = true }]
