@@ -6,12 +6,14 @@ from transformers import AutoConfig
 from transformers.configuration_utils import PretrainedConfig
 from transformers.models.auto.auto_factory import _BaseAutoModelClass, _LazyAutoMapping, auto_class_update
 from transformers.models.auto.configuration_auto import CONFIG_MAPPING_NAMES
+from transformers.models.gemma4.configuration_gemma4 import Gemma4Config
 from transformers.models.llama.configuration_llama import LlamaConfig
 from transformers.models.qwen3.configuration_qwen3 import Qwen3Config
 
 from prime_rl.trainer.models.afmoe import AfmoeConfig, AfmoeForCausalLM
 from prime_rl.trainer.models.base import PreTrainedModelPrimeRL
 from prime_rl.trainer.models.deepseek_v4 import DeepseekV4Config, DeepseekV4ForCausalLM
+from prime_rl.trainer.models.gemma4 import Gemma4ForCausalLM
 from prime_rl.trainer.models.glm4_moe import Glm4MoeConfig, Glm4MoeForCausalLM
 from prime_rl.trainer.models.glm_moe_dsa import GlmMoeDsaConfig, GlmMoeDsaForCausalLM
 from prime_rl.trainer.models.gpt_oss import GptOssConfig, GptOssForCausalLM
@@ -63,6 +65,8 @@ _CUSTOM_CAUSAL_LM_MODELS: tuple[
     (Qwen3Config, Qwen3ForCausalLM),
     (AfmoeConfig, AfmoeForCausalLM),
     (DeepseekV4Config, DeepseekV4ForCausalLM),
+    # Text-only training of the composite Gemma 4 checkpoint (vision/audio towers are not built).
+    (Gemma4Config, Gemma4ForCausalLM),
     (Glm4MoeConfig, Glm4MoeForCausalLM),
     (GlmMoeDsaConfig, GlmMoeDsaForCausalLM),
     (LagunaConfig, LagunaForCausalLM),

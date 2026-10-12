@@ -84,8 +84,9 @@ class VanillaOutputLinear(torch.nn.Linear):
     """LM head that returns the full logits, or with ``labels`` and no ``temperature`` the summed fp32
     cross-entropy over labels != IGNORE_INDEX as ``loss``."""
 
-    def __init__(self, in_features: int, out_features: int):
+    def __init__(self, in_features: int, out_features: int, softcap: float | None = None):
         super().__init__(in_features, out_features, bias=False)
+        self.softcap = softcap
 
     def forward(
         self,
@@ -95,6 +96,9 @@ class VanillaOutputLinear(torch.nn.Linear):
         sampling_mask: Tensor | None = None,
     ) -> PrimeLmOutput:
         logits = super().forward(hidden_states)
+        if self.softcap is not None:
+            # Final logit softcapping (Gemma): softcap * tanh(logits / softcap).
+            logits = torch.tanh(logits / self.softcap) * self.softcap
         if labels is not None and temperature is None:
             return PrimeLmOutput(loss=cross_entropy_sum(logits, labels))
         # train.py applies temperature scaling and sampling-mask replay to the logits.
@@ -384,8 +388,17 @@ def inject_prime_lm_head(
 
     logger = get_logger()
 
+    config = getattr(model, "config", None)
+    text_config = config.get_text_config() if config is not None else None
+    softcap = getattr(text_config, "final_logit_softcapping", None)
+
     # Replace the lm_head with the appropriate wrapper
     old_lm_head = model.lm_head
+    if isinstance(chunk_size, int) and softcap is not None:
+        raise ValueError(
+            f"This model softcaps its final logits ({softcap}), which the fused LM head does not support; "
+            "set trainer.model.fused_lm_head_token_chunk_size = 'disabled'"
+        )
     if isinstance(chunk_size, int):
         logger.info(f"Injecting chunked LM head with chunk size {chunk_size}")
         model.lm_head = FusedOutputLinear(
@@ -393,7 +406,9 @@ def inject_prime_lm_head(
         )
     else:
         logger.info("Injecting vanilla LM head")
-        model.lm_head = VanillaOutputLinear(in_features=old_lm_head.in_features, out_features=old_lm_head.out_features)
+        model.lm_head = VanillaOutputLinear(
+            in_features=old_lm_head.in_features, out_features=old_lm_head.out_features, softcap=softcap
+        )
     model.lm_head.weight = old_lm_head.weight
     del old_lm_head
 

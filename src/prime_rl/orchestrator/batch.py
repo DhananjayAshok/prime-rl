@@ -121,11 +121,11 @@ def _packing_cost_coeffs(config: Any) -> tuple[int, int]:
     def layer_linear(ffn_hidden_size: int) -> int:
         return qkv_per_token + 2 * hidden_size * hidden_size + _ffn_flops_per_token(hidden_size, ffn_hidden_size)
 
-    linear = (
-        num_dense_layers * layer_linear(_dense_ffn_hidden_size(config))
-        + num_moe_layers * layer_linear(_moe_ffn_hidden_size(config))
-        + 2 * hidden_size * config.vocab_size
-    )
+    linear = num_dense_layers * layer_linear(_dense_ffn_hidden_size(config)) + 2 * hidden_size * config.vocab_size
+    # Dense configs may still carry null MoE fields (e.g. Gemma 4's num_experts_per_tok), so only
+    # read them when there are MoE layers.
+    if num_moe_layers:
+        linear += num_moe_layers * layer_linear(_moe_ffn_hidden_size(config))
     quadratic = (num_dense_layers + num_moe_layers) * attn_per_token_squared
     return linear, quadratic
 
