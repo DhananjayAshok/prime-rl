@@ -208,6 +208,51 @@ class GRPOAlgoConfig(BaseAlgoConfig):
     """How the rl loss weights tokens across prompt groups. ``token``: every loss token in the batch weighs the same, so groups with more total tokens dominate the gradient. ``prompt``: prompt-mean (MiMo-V2.6 Eq. 1) — each trainable token of group ``q`` gets rl weight ``1 / T_q`` (``T_q`` = the group's trainable tokens), and the trainer divides the rl loss by the summed weights, i.e. the number of groups. All rl envs of a run must use the same value."""
 
 
+class CallGRPOAlgoConfig(BaseAlgoConfig):
+    type: Literal["call_grpo"] = "call_grpo"
+    """GRPO with per-call credit for multi-call episodes. The env writes, per model call and in
+    the order of the trace's trainable nodes, a reward (``trace.info[rewards_key]``), a
+    credit-unit id (``trace.info[units_key]``; units with the same id are comparable across
+    rollouts; required by the ``unit`` and ``unit_tag`` baselines, unused by the others) and
+    optionally a tag (``trace.info[tags_key]``, the kind of call; default: one tag for all
+    calls). Each call's tokens get advantage = its reward minus a baseline chosen by
+    ``baseline``."""
+
+    action_loss_type: ClassVar[ActionLossType] = "rl"
+
+    baseline: Literal["unit", "unit_tag", "within_tag", "within_trace", "hybrid"] = "hybrid"
+    """``unit``: the mean reward of the same unit id across the group's rollouts of the same
+    agent, its own included (a rollout's unit reward being the mean of that unit's call
+    rewards); a call whose unit no other rollout has gets advantage 0.
+    ``unit_tag``: as ``unit``, keyed by (unit, tag): a call is compared only with calls of the
+    same tag in the same unit of the other rollouts, so calls of different kinds in one unit
+    (with different rewards) do not shift each other's baselines.
+    ``within_tag``: the mean reward of the calls with the same tag in the same rollout.
+    ``within_trace``: the mean reward of all calls in the same rollout. The two ``within``
+    baselines ignore other rollouts, so they also work with ``group_size = 1``.
+    ``hybrid`` (default): ``game_weight`` times the trace's GRPO advantage (its scalar reward minus the
+    mean scalar reward of the group's rollouts of the same agent) plus the ``hybrid_within``
+    advantage of the call. Neither term uses unit ids, so calls need not line up across
+    rollouts; the game term is what ranks a better rollout above a worse one, which the
+    ``within`` baselines alone cannot do (their advantages sum to zero in every rollout)."""
+
+    hybrid_within: Literal["within_tag", "within_trace"] = "within_tag"
+    """The per-call term of the ``hybrid`` baseline."""
+
+    game_weight: float = Field(1.0, ge=0.0)
+    """The weight of the game (GRPO) term of the ``hybrid`` baseline."""
+
+    rewards_key: str = "call_rewards"
+    """The ``trace.info`` key holding the per-call rewards (a list of floats)."""
+
+    units_key: str = "call_units"
+    """The ``trace.info`` key holding the per-call credit-unit ids (required by ``unit`` and
+    ``unit_tag``)."""
+
+    tags_key: str = "call_tags"
+    """The ``trace.info`` key holding the per-call tags (optional)."""
+
+
 class EchoAlgoConfig(GRPOAlgoConfig):
     type: Literal["echo"] = "echo"  # type: ignore[assignment]
     """ECHO: group-relative advantage on action tokens (GRPO), plus weighted
@@ -392,6 +437,7 @@ class DebugAlgoConfig(BaseAlgoConfig):
 
 AlgoConfig: TypeAlias = Annotated[
     GRPOAlgoConfig
+    | CallGRPOAlgoConfig
     | EchoAlgoConfig
     | MaxRLAlgoConfig
     | RAEAlgoConfig
@@ -407,6 +453,7 @@ assignment and loss routing, fused). The ``type`` selects the algorithm, and
 its class defaults are the vetted setting.
 
 - ``grpo`` — policy group sampling, group-relative advantage, RL loss (the default).
+- ``call_grpo`` — GRPO with per-call credit: env-provided rewards per model call, baselined per credit unit across the group or within each rollout.
 - ``max_rl`` — GRPO with mean-normalized advantages (maximum-likelihood RL).
 - ``rae`` — reward minus a per-agent EMA baseline (SPIRAL), for multi-agent self-play envs.
 - ``hierarchical_grpo`` — GRPO for proposer-solver envs: solvers are compared within one proposed problem and proposers across proposals. Needs ``episode_agents``.
