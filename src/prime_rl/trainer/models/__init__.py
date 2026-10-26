@@ -21,6 +21,12 @@ from prime_rl.trainer.models.laguna import LagunaConfig, LagunaForCausalLM
 from prime_rl.trainer.models.layers.lm_head import PrimeLmOutput, cast_float_and_contiguous
 from prime_rl.trainer.models.llama import LlamaForCausalLM
 from prime_rl.trainer.models.minimax_m2 import MiniMaxM2Config, MiniMaxM2ForCausalLM
+from prime_rl.trainer.models.muse_glimmer import (  # CLAUDE GENERATED, DJ DOES NOT APPROVE, MUST BE REVISED
+    MuseGlimmerConfig,
+    MuseGlimmerForCausalLM,
+    MuseGlimmerTextConfig,
+    MuseGlimmerVisionConfig,
+)
 from prime_rl.trainer.models.nemotron_h import NemotronHConfig, NemotronHForCausalLM
 from prime_rl.trainer.models.qwen3 import Qwen3ForCausalLM
 from prime_rl.trainer.models.qwen3_5 import (
@@ -46,6 +52,10 @@ AutoConfig.register("glm_moe_dsa", GlmMoeDsaConfig, exist_ok=True)
 AutoConfig.register("gpt_oss", GptOssConfig, exist_ok=True)
 AutoConfig.register("laguna", LagunaConfig, exist_ok=True)
 AutoConfig.register("minimax_m2", MiniMaxM2Config, exist_ok=True)
+# CLAUDE GENERATED (muse_glimmer*), DJ DOES NOT APPROVE, MUST BE REVISED: transformers has no Muse Glimmer config.
+AutoConfig.register("muse_glimmer", MuseGlimmerConfig, exist_ok=True)
+AutoConfig.register("muse_glimmer_text", MuseGlimmerTextConfig, exist_ok=True)
+AutoConfig.register("muse_glimmer_vision", MuseGlimmerVisionConfig, exist_ok=True)
 AutoConfig.register("nemotron_h", NemotronHConfig, exist_ok=True)
 AutoConfig.register("qwen3_moe", Qwen3MoeConfig, exist_ok=True)
 AutoConfig.register("qwen3_5", Qwen3_5Config, exist_ok=True)
@@ -71,6 +81,9 @@ _CUSTOM_CAUSAL_LM_MODELS: tuple[
     (GlmMoeDsaConfig, GlmMoeDsaForCausalLM),
     (LagunaConfig, LagunaForCausalLM),
     (MiniMaxM2Config, MiniMaxM2ForCausalLM),
+    # CLAUDE GENERATED, DJ DOES NOT APPROVE, MUST BE REVISED: text-only training of the composite Muse Glimmer
+    # checkpoint (the vision tower is not built).
+    (MuseGlimmerConfig, MuseGlimmerForCausalLM),
     (NemotronHConfig, NemotronHForCausalLM),
     (Qwen3MoeConfig, Qwen3MoeForCausalLM),
     (Qwen3_5TextConfig, Qwen3_5ForCausalLM),
