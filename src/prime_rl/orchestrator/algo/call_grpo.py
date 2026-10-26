@@ -106,6 +106,17 @@ def call_advantages(
     raise ValueError(f"unknown call_grpo baseline {baseline!r}")
 
 
+def keep_credited(
+    *, advantages: list[list[float]], tags: list[list[Hashable]], invalid: list[list[bool]], kinds: list[str]
+) -> list[list[float]]:
+    """``advantages`` with every call zeroed except those whose tag's kind (the part of the tag
+    before the first ``:``) is in ``kinds`` and those flagged ``invalid``."""
+    return [
+        [a if bad or str(t).split(":")[0] in kinds else 0.0 for a, t, bad in zip(advs, ts, inv, strict=True)]
+        for advs, ts, inv in zip(advantages, tags, invalid, strict=True)
+    ]
+
+
 class CallGRPOAlgorithm(Algorithm):
     """GRPO with per-call credit: each model call (trainable node) of a trace gets its own
     advantage, its env-provided reward minus a baseline from comparable calls (see
@@ -136,12 +147,15 @@ class CallGRPOAlgorithm(Algorithm):
     async def score_group(self, episodes: list[vf.Episode]) -> None:
         traces = [trace for _, trace in iter_trainable_traces(episodes)]
         needs_units = self.config.baseline in UNIT_BASELINES
-        rewards, units, tags = [], [], []
+        credit_kinds = None if self.config.credit_kinds == "all" else self.config.credit_kinds
+        rewards, units, tags, invalid = [], [], [], []
         for trace in traces:
             n = len(trainable_nodes(trace))
             rewards.append([float(r) for r in self._per_call(trace, self.config.rewards_key, n, required=True)])
             units.append(self._per_call(trace, self.config.units_key, n, required=needs_units))
-            tags.append(self._per_call(trace, self.config.tags_key, n, required=False) or [None] * n)
+            tags.append(self._per_call(trace, self.config.tags_key, n, required=credit_kinds is not None) or [None] * n)
+            if credit_kinds is not None:
+                invalid.append([bool(b) for b in self._per_call(trace, self.config.invalid_key, n, required=True)])
 
         advantages = call_advantages(
             rewards=rewards,
@@ -153,6 +167,8 @@ class CallGRPOAlgorithm(Algorithm):
             hybrid_within=self.config.hybrid_within,
             game_weight=self.config.game_weight,
         )
+        if credit_kinds is not None:
+            advantages = keep_credited(advantages=advantages, tags=tags, invalid=invalid, kinds=credit_kinds)
         for trace, call_advs in zip(traces, advantages, strict=True):
             per_token: list[float] = []
             for advantage, node in zip(call_advs, trainable_nodes(trace), strict=True):

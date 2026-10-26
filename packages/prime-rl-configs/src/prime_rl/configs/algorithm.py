@@ -252,6 +252,16 @@ class CallGRPOAlgoConfig(BaseAlgoConfig):
     tags_key: str = "call_tags"
     """The ``trace.info`` key holding the per-call tags (optional)."""
 
+    credit_kinds: list[str] | Literal["all"] = ["think"]
+    """After the baseline is computed over all calls, only calls whose tag's kind (the part before
+    the first ``:``) is listed, and calls flagged in ``trace.info[invalid_key]``, keep their
+    advantage; every other call gets 0. The default ``["think"]`` credits only the reasoning,
+    while an invalid answer is still penalized. ``"all"``: every call keeps its advantage."""
+
+    invalid_key: str = "call_invalid"
+    """The ``trace.info`` key holding the per-call invalid flags (required unless ``credit_kinds``
+    is ``"all"``)."""
+
 
 class EchoAlgoConfig(GRPOAlgoConfig):
     type: Literal["echo"] = "echo"  # type: ignore[assignment]
