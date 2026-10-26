@@ -45,9 +45,13 @@ class FusedOutputLinear(torch.nn.Linear):
     With ``temperature`` it returns per-token ``logprobs`` and ``entropy``.
     """
 
-    def __init__(self, in_features: int, out_features: int, chunk_size: int):
+    def __init__(self, in_features: int, out_features: int, chunk_size: int, softcap: float | None = None):
         super().__init__(in_features, out_features, bias=False)
         self.chunk_size = chunk_size
+        # CLAUDE GENERATED (softcap only), DJ DOES NOT APPROVE, MUST BE REVISED
+        # Final logit softcapping (Gemma), softcap * tanh(logits / softcap), applied per chunk in the
+        # logprob path; the summed cross-entropy (SFT) path does not support it.
+        self.softcap = softcap
 
     def forward(
         self,
@@ -64,6 +68,8 @@ class FusedOutputLinear(torch.nn.Linear):
 
         if temperature is None:
             assert sampling_mask is None, "sampling-mask replay requires per-token temperatures"
+            if self.softcap is not None:
+                raise ValueError("the fused LM head's cross-entropy path does not support logit softcapping")
             loss = _ChunkedCrossEntropySumFn.apply(hidden_states, self.weight, labels, self.chunk_size)
             return PrimeLmOutput(loss=loss)
 
@@ -72,7 +78,7 @@ class FusedOutputLinear(torch.nn.Linear):
             sampling_mask = sampling_mask.reshape(b * s, sampling_mask.shape[-1]).contiguous()
 
         logprobs, entropy = _SequenceChunkedLogProbEntropyFn.apply(
-            hidden_states, self.weight, labels, inv_t, self.chunk_size, sampling_mask
+            hidden_states, self.weight, labels, inv_t, self.chunk_size, sampling_mask, self.softcap
         )
 
         logprobs = logprobs.reshape(b, s)
@@ -152,6 +158,7 @@ class _SequenceChunkedLogProbEntropyFn(torch.autograd.Function):
         inv_temperature: torch.Tensor,  # [N]
         chunk_size: int,
         sampling_mask: torch.Tensor | None = None,  # [N, K] int32, -1-padded
+        softcap: float | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Returns per-token logprobs and entropy by chunking over flattened sequence tokens.
@@ -206,7 +213,7 @@ class _SequenceChunkedLogProbEntropyFn(torch.autograd.Function):
                 vocab_end = min(vocab_start + vocab_chunk_size, vocab)
                 weight_chunk = weight[vocab_start:vocab_end]
                 logits_chunk = hidden_chunk @ weight_chunk.t()
-                scaled_logits = logits_chunk.to(torch.float32) * inv_t_chunk
+                scaled_logits = _softcap(logits_chunk.to(torch.float32), softcap) * inv_t_chunk
 
                 m, s, t = _online_logsumexp_and_weighted_update(m, s, t, scaled_logits)
 
@@ -235,6 +242,7 @@ class _SequenceChunkedLogProbEntropyFn(torch.autograd.Function):
         )  # Without materialized grads unused outputs get grad None instead of zeros and backward can reject them without a sync
         ctx.save_for_backward(hidden, weight, labels, inv_temperature, logz, sampling_mask, replay)
         ctx.chunk_size = chunk_size
+        ctx.softcap = softcap
 
         return logprobs, entropy
 
@@ -246,6 +254,7 @@ class _SequenceChunkedLogProbEntropyFn(torch.autograd.Function):
 
         hidden, weight, labels, inv_temperature, logz, sampling_mask, replay = ctx.saved_tensors
         chunk_size: int = ctx.chunk_size
+        softcap: float | None = ctx.softcap
 
         n, _ = hidden.shape
         vocab = weight.shape[0]
@@ -269,7 +278,8 @@ class _SequenceChunkedLogProbEntropyFn(torch.autograd.Function):
                 vocab_end = min(vocab_start + vocab_chunk_size, vocab)
                 weight_chunk = weight[vocab_start:vocab_end]
                 logits_chunk = hidden_chunk @ weight_chunk.t()
-                scaled_logits = logits_chunk.to(torch.float32) * inv_t_chunk
+                capped_logits = _softcap(logits_chunk.to(torch.float32), softcap)
+                scaled_logits = capped_logits * inv_t_chunk
 
                 if mask_chunk is not None:
                     # Replayed rows get softmax gradient only on mask ids. Set masked-out
@@ -288,13 +298,20 @@ class _SequenceChunkedLogProbEntropyFn(torch.autograd.Function):
                 local_idx = (labels_chunk - vocab_start).clamp(0, vocab_end - vocab_start - 1).to(torch.int64)
                 grad_logits.scatter_add_(1, local_idx.unsqueeze(1), (grad_chunk * in_range).unsqueeze(1))
                 grad_logits = grad_logits * inv_t_chunk
+                if softcap is not None:
+                    grad_logits = grad_logits * (1.0 - (capped_logits / softcap) ** 2)
 
                 if needs_hidden:
                     grad_hidden[start:end].add_(grad_logits.to(hidden.dtype) @ weight_chunk)
                 if needs_weight:
                     grad_weight[vocab_start:vocab_end].add_(grad_logits.to(weight.dtype).t() @ hidden_chunk)
 
-        return grad_hidden, grad_weight, None, None, None, None
+        return grad_hidden, grad_weight, None, None, None, None, None
+
+
+def _softcap(logits: torch.Tensor, softcap: float | None) -> torch.Tensor:
+    """softcap * tanh(logits / softcap), or the logits unchanged without a softcap."""
+    return logits if softcap is None else torch.tanh(logits / softcap) * softcap
 
 
 class _ChunkedCrossEntropySumFn(torch.autograd.Function):
@@ -394,15 +411,13 @@ def inject_prime_lm_head(
 
     # Replace the lm_head with the appropriate wrapper
     old_lm_head = model.lm_head
-    if isinstance(chunk_size, int) and softcap is not None:
-        raise ValueError(
-            f"This model softcaps its final logits ({softcap}), which the fused LM head does not support; "
-            "set trainer.model.fused_lm_head_token_chunk_size = 'disabled'"
-        )
     if isinstance(chunk_size, int):
-        logger.info(f"Injecting chunked LM head with chunk size {chunk_size}")
+        logger.info(f"Injecting chunked LM head with chunk size {chunk_size} (softcap {softcap})")
         model.lm_head = FusedOutputLinear(
-            in_features=old_lm_head.in_features, out_features=old_lm_head.out_features, chunk_size=chunk_size
+            in_features=old_lm_head.in_features,
+            out_features=old_lm_head.out_features,
+            chunk_size=chunk_size,
+            softcap=softcap,
         )
     else:
         logger.info("Injecting vanilla LM head")
