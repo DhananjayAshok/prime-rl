@@ -98,16 +98,24 @@ class Gemma4Attention(nn.Module):
         for start, end in zip(bounds[:-1], bounds[1:]):
             if end == start:
                 continue
-            q, k, v = (t[start:end].transpose(0, 1) for t in (query, key, value))
+            # CLAUDE GENERATED (4-D inputs and KV expansion only), DJ DOES NOT APPROVE, MUST BE REVISED
+            # [1, H, L, D] with the KV heads expanded, not [H, L, D] with enable_gqa: SDPA's fused
+            # kernels only take 4-D inputs and the memory-efficient one does not take enable_gqa, so
+            # with head_dim 512 (too large for flash) it fell back to the math kernel, which
+            # materializes the attention matrix (~34 GiB forward+backward at 8k tokens on an A40,
+            # vs ~2.6 GiB this way; same accuracy against fp32).
+            q, k, v = (t[start:end].transpose(0, 1).unsqueeze(0) for t in (query, key, value))
+            if k.shape[1] != q.shape[1]:
+                k, v = (t.repeat_interleave(q.shape[1] // t.shape[1], dim=1) for t in (k, v))
             mask = None
             if self.sliding_window is not None and end - start > self.sliding_window:
                 pos = torch.arange(end - start, device=q.device)
                 diff = pos[:, None] - pos[None, :]
                 mask = (diff >= 0) & (diff < self.sliding_window)
             out = F.scaled_dot_product_attention(
-                q, k, v, attn_mask=mask, is_causal=mask is None, scale=1.0, enable_gqa=True
+                q, k, v, attn_mask=mask, is_causal=mask is None, scale=1.0
             )
-            outputs.append(out.transpose(0, 1))
+            outputs.append(out[0].transpose(0, 1))
         return torch.cat(outputs, dim=0)
 
 
