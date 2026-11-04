@@ -43,6 +43,11 @@ class ModelConfig(BaseModelConfig):
     client: VLLMClientConfig = Field(default_factory=VLLMClientConfig)
     """Client of the live deployment (``[orchestrator.model.client]``)."""
 
+    static_loras: dict[str, Path] = Field(default_factory=dict)
+    """Frozen LoRA adapters to serve beside the policy, as {served name: adapter directory}. Each is
+    loaded once into the policy inference pool at startup and never updated, so a client (e.g. a
+    pinned opponent) can request it by name. Needs ``inference.vllm.max_loras`` >= 1 + their number."""
+
 
 class TrainSamplingConfig(BaseConfig):
     temperature: float = Field(1.0, ge=0, le=2.0)

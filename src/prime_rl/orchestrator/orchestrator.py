@@ -40,7 +40,7 @@ from prime_rl.orchestrator.algo.routing import is_trainable
 from prime_rl.orchestrator.annotations import stamp_arrival, stamp_batch
 from prime_rl.orchestrator.batch import BatchPacker
 from prime_rl.orchestrator.ckpt import setup_ckpt_manager
-from prime_rl.orchestrator.clients import AdminPlane, InferenceClient, setup_admin_plane
+from prime_rl.orchestrator.clients import AdminPlane, InferenceClient, load_lora_adapter, setup_admin_plane
 from prime_rl.orchestrator.concurrency import ConcurrencyController
 from prime_rl.orchestrator.dispatcher import Dispatcher, DispatcherMode
 from prime_rl.orchestrator.envs import EvalEnvs, TrainEnvs
@@ -299,6 +299,9 @@ class Orchestrator:
         )
         await self.receiver.initialize()
         get_logger().debug(f"Initialized weight broadcast in {format_time(time.perf_counter() - t0)}")
+        for lora_name, lora_path in config.model.static_loras.items():
+            get_logger().info(f"Loading static LoRA adapter {lora_name} from {lora_path}")
+            await load_lora_adapter(self.admin_plane, lora_name, lora_path)
 
         # Sync inference to the incoming policy before the first step, rendezvousing
         # with the trainer's startup broadcast (v{resume_step} on resume, v0 from

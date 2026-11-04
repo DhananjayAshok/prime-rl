@@ -130,6 +130,9 @@ class LoRAConfig(BaseConfig):
     modules_to_save: list[str] = []
     """Module names or regex patterns to keep fully trainable (not freeze). Same matching rules as ``target_modules``."""
 
+    init_adapter: Path | None = None
+    """Directory of a saved adapter (``adapter_model.safetensors``, as the trainer's weight broadcast writes it) to start the LoRA weights from instead of a fresh initialization (RL trainer only). Its rank and target modules must match this config. Optimizer and scheduler start fresh; a checkpoint resume overrides it."""
+
 
 class DebugModelConfig(BaseConfig):
     num_layers: int | None = None

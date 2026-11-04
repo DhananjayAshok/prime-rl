@@ -196,9 +196,12 @@ def train(config: TrainerConfig):
     ep_group = parallel_dims.get_mesh("ep").get_group() if parallel_dims.ep_enabled else None
 
     # Fresh adapter init after FSDP materialization (the pretrained checkpoint
-    # carries no adapter weights); a checkpoint resume below overwrites it.
+    # carries no adapter weights), or the configured initial adapter; a checkpoint
+    # resume below overwrites either.
     if config.model.lora is not None:
         get_lora_state().reset_adapter_parameters()
+        if config.model.lora.init_adapter is not None:
+            get_lora_state().load_adapter(config.model.lora.init_adapter)
 
     # Optionally, resume training from a checkpoint
     progress = Progress()

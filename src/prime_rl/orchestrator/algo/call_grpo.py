@@ -110,9 +110,10 @@ def keep_credited(
     *, advantages: list[list[float]], tags: list[list[Hashable]], invalid: list[list[bool]], kinds: list[str]
 ) -> list[list[float]]:
     """``advantages`` with every call zeroed except those whose tag's kind (the part of the tag
-    before the first ``:``) is in ``kinds`` and those flagged ``invalid``."""
+    before the first ``:``) or whole tag (e.g. ``"talk:debate"``) is in ``kinds``, and those flagged ``invalid``."""
     return [
-        [a if bad or str(t).split(":")[0] in kinds else 0.0 for a, t, bad in zip(advs, ts, inv, strict=True)]
+        [a if bad or str(t).split(":")[0] in kinds or str(t) in kinds else 0.0
+         for a, t, bad in zip(advs, ts, inv, strict=True)]
         for advs, ts, inv in zip(advantages, tags, invalid, strict=True)
     ]
 

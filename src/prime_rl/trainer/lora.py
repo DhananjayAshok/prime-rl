@@ -1,4 +1,5 @@
 import re
+from pathlib import Path
 from typing import Callable, List
 
 import torch
@@ -71,6 +72,39 @@ class LoRAState:
         if self._adapter_state_dict_converter is not None:
             state_dict = self._adapter_state_dict_converter(state_dict)
         return state_dict
+
+    @torch.no_grad()
+    def load_adapter(self, adapter_dir: Path) -> None:
+        """Overwrite the adapter parameters with a saved adapter (``adapter_model.safetensors`` in the format
+        ``adapter_state_dict`` produces). Every rank reads the full file and keeps its own shard. Call it after the
+        model's weights are loaded; every adapter key must match a parameter of the same shape."""
+        from safetensors.torch import load_file
+        from torch.distributed.tensor import DTensor, distribute_tensor
+
+        if any(hasattr(module, "state_dict_for_adapter") for _, module in self._modules):
+            raise ValueError("Loading an initial adapter is not supported for MoE LoRA modules")
+        params = {
+            f"{prefix}.{name}.weight": param
+            for prefix, module in self._modules
+            for name, param in module.named_parameters_for_adapter(0)
+        }
+        if self._adapter_state_dict_converter is not None:
+            # Renames only: the converter returns the same parameter objects under their HF keys
+            params = self._adapter_state_dict_converter(params)
+        saved = load_file(str(Path(adapter_dir) / "adapter_model.safetensors"))
+        if saved.keys() != params.keys():
+            missing, extra = sorted(params.keys() - saved.keys()), sorted(saved.keys() - params.keys())
+            raise ValueError(f"Adapter {adapter_dir} does not match the model: missing {missing[:3]}, extra {extra[:3]}")
+        for key, param in params.items():
+            value = saved[key]
+            if tuple(value.shape) != tuple(param.shape):
+                raise ValueError(f"Adapter {adapter_dir}: {key} has shape {tuple(value.shape)}, model {tuple(param.shape)}")
+            if isinstance(param, DTensor):
+                value = distribute_tensor(
+                    value.to(param.device_mesh.device_type), param.device_mesh, param.placements, src_data_rank=None
+                )
+            param.copy_(value)
+        get_logger().info(f"Loaded initial adapter from {adapter_dir} ({len(params)} tensors)")
 
     def reset_adapter_parameters(self) -> None:
         """Reset the adapter to fresh initialization across all registered modules."""
