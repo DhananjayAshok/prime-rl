@@ -563,6 +563,8 @@ class Dispatcher:
             cache_salt = str(group.policy_version_at_start)
         else:
             cache_salt = None
+        # CLAUDE GENERATED (scheduled train temperature, fixed by the group's dispatch step), DJ DOES NOT APPROVE, MUST BE REVISED
+        temperature = env.config.sampling.temperature_at(group.step) if group.kind == "train" else None
 
         group.episodes_to_schedule -= 1
         await self.acquire()
@@ -598,6 +600,7 @@ class Dispatcher:
                     cache_salt=cache_salt,
                     task_data=group.task.data.model_dump(mode="json"),
                     on_delta=on_delta,
+                    temperature=temperature,  # CLAUDE GENERATED, DJ DOES NOT APPROVE, MUST BE REVISED
                 )
                 session_ids.update(trace.id for trace in episode.traces)
                 return episode

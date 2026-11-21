@@ -107,8 +107,10 @@ class Env:
         num_tasks = self.num_tasks if self.num_tasks is not None else "infinite"
         get_logger().info(f"Env {self.name} ready in {format_time(time.perf_counter() - t0)} (num_tasks={num_tasks})")
 
-    def _sampling(self, cache_salt: str | None) -> vf.SamplingConfig:
+    def _sampling(self, cache_salt: str | None, temperature: float | None = None) -> vf.SamplingConfig:
         sampling = {**self.sampling_args}
+        if temperature is not None:  # CLAUDE GENERATED (scheduled temperature), DJ DOES NOT APPROVE, MUST BE REVISED
+            sampling["temperature"] = temperature
         if cache_salt is not None:
             sampling["extra_body"] = {**sampling.get("extra_body", {}), "cache_salt": cache_salt}
         return vf.SamplingConfig(**sampling)
@@ -120,6 +122,7 @@ class Env:
         cache_salt: str | None,
         task_data: dict,
         on_delta: Callable[[dict], None] | None = None,
+        temperature: float | None = None,  # CLAUDE GENERATED, DJ DOES NOT APPROVE, MUST BE REVISED
     ) -> vf.WireEpisode:
         """Run and return one typed episode. A failed multi-trace episode marks
         its otherwise-clean traces failed so partial episodes never train.
@@ -129,7 +132,7 @@ class Env:
             task_data=task_data,
             client=client,
             model=model_name,
-            sampling=self._sampling(cache_salt),
+            sampling=self._sampling(cache_salt, temperature),  # CLAUDE GENERATED, DJ DOES NOT APPROVE, MUST BE REVISED
             on_delta=on_delta,
         )
         for trace in episode.traces:

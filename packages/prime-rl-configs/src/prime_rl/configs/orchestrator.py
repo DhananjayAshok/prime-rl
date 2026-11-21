@@ -51,7 +51,29 @@ class ModelConfig(BaseModelConfig):
 
 class TrainSamplingConfig(BaseConfig):
     temperature: float = Field(1.0, ge=0, le=2.0)
-    """Sampling temperature."""
+    """Sampling temperature (the schedule's start when ``temperature_end`` is set)."""
+
+    # CLAUDE GENERATED (linear temperature schedule), DJ DOES NOT APPROVE, MUST BE REVISED
+    temperature_end: float | None = Field(None, gt=0, le=2.0)
+    """If set, the temperature moves linearly from ``temperature`` at step 0 to this value at
+    ``temperature_decay_steps`` and holds there. A rollout's temperature is fixed by the step
+    it was dispatched at, so the trainer scores it at the temperature it was sampled with."""
+
+    temperature_decay_steps: int | None = Field(None, ge=1)
+    """Steps the linear schedule spans (required with ``temperature_end``)."""
+
+    def temperature_at(self, step: int) -> float:
+        if self.temperature_end is None:
+            return self.temperature
+        frac = min(max(step, 0) / self.temperature_decay_steps, 1.0)
+        return self.temperature + (self.temperature_end - self.temperature) * frac
+
+    @model_validator(mode="after")
+    def validate_temperature_schedule(self):
+        if (self.temperature_end is None) != (self.temperature_decay_steps is None):
+            raise ValueError("temperature_end and temperature_decay_steps must be set together")
+        return self
+    # END CLAUDE GENERATED
 
     top_p: float = Field(1.0, gt=0, le=1.0)
     """Nucleus (top-p) sampling for train rollouts. Values below 1.0 truncate the sampling

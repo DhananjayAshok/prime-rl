@@ -255,7 +255,10 @@ class TrainSink:
             return
 
         samples_by_trace: dict[str, list[TrainingSample]] = {}
+        # CLAUDE GENERATED (scheduled temperature: the group's dispatch step fixes it), DJ DOES NOT APPROVE, MUST BE REVISED
         temperature = env.sampling_args["temperature"]
+        if env.config.sampling.temperature_end is not None:
+            temperature = env.config.sampling.temperature_at(group[0].run.work.step)
         for trace in survivors:
             samples = await asyncio.to_thread(trace_to_samples, trace, env_name=env_name)
             for sample in samples:
