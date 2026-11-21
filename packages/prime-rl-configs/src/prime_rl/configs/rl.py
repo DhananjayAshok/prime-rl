@@ -93,6 +93,11 @@ class SharedCheckpointConfig(BaseConfig):
     keep_interval: int | None = Field(None, ge=1)
     """Keep checkpoints at every N steps permanently (e.g. ``keep_interval=100`` keeps step 100, 200, ...). If None, no interval-based keeping."""
 
+    # CLAUDE GENERATED (trainable_only), DJ DOES NOT APPROVE, MUST BE REVISED
+    trainable_only: bool | None = None
+    """Trainer checkpoints hold only the trainable parameters when some are frozen (LoRA); on by default. See ``trainer.ckpt.trainable_only``."""
+    # END CLAUDE GENERATED
+
 
 class SharedModelConfig(BaseConfig):
     name: str = "Qwen/Qwen3-0.6B"

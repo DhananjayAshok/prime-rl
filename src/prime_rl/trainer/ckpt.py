@@ -8,7 +8,13 @@ from typing import Any
 
 import torch
 from torch import nn
-from torch.distributed.checkpoint.state_dict import get_state_dict, set_model_state_dict, set_state_dict
+from torch.distributed.checkpoint.state_dict import (
+    StateDictOptions,
+    _get_fqns,  # CLAUDE GENERATED (trainable_only), DJ DOES NOT APPROVE, MUST BE REVISED
+    get_state_dict,
+    set_model_state_dict,
+    set_state_dict,
+)
 from torch.distributed.checkpoint.state_dict_loader import load as dcp_load
 from torch.distributed.checkpoint.state_dict_saver import save as dcp_save
 from torch.distributed.checkpoint.stateful import Stateful
@@ -45,6 +51,17 @@ def _try_rmtree(path: Path, logger) -> None:
         logger.warning(f"Failed to remove {path}: {e}, skipping cleanup")
 
 
+# CLAUDE GENERATED (trainable_only), DJ DOES NOT APPROVE, MUST BE REVISED
+TRAINABLE_ONLY_MARKER = "TRAINABLE_ONLY"
+"""File in a trainer checkpoint dir saved with ``trainable_only``: it holds no frozen base weights, so a
+resume must load those from the HF model first."""
+
+
+def is_trainable_only_checkpoint(path: Path) -> bool:
+    return (path / TRAINABLE_ONLY_MARKER).exists()
+# END CLAUDE GENERATED
+
+
 class AppState(Stateful):
     """
     A wrapper for checkpointing the trainer with sharded weights and optimizer
@@ -60,11 +77,32 @@ class AppState(Stateful):
         optimizers: list[OptimizerLike],
         scheduler: LRScheduler | None,
         progress: Progress | None,
+        trainable_only: bool = False,  # CLAUDE GENERATED (trainable_only), DJ DOES NOT APPROVE, MUST BE REVISED
     ):
         self.model = model
         self.optimizers = optimizers
         self.scheduler = scheduler
         self.progress = progress
+        # CLAUDE GENERATED (trainable_only), DJ DOES NOT APPROVE, MUST BE REVISED
+        # The saved model state covers only the trainable params (_trainable_only_model_state); loading is
+        # non-strict because the frozen ones (already loaded from HF) are absent from the checkpoint. (torch's
+        # ignore_frozen_params can't be used: LoRA layers save base_layer params without the base_layer. prefix.)
+        self.trainable_only = trainable_only
+        self.options = StateDictOptions(strict=False) if trainable_only else None
+        # END CLAUDE GENERATED
+
+    # CLAUDE GENERATED (trainable_only), DJ DOES NOT APPROVE, MUST BE REVISED
+    def _trainable_only_model_state(self, model_state_dict: dict[str, Any]) -> dict[str, Any]:
+        """The entries of ``model_state_dict`` for trainable params (state dict keys drop LoRA's base_layer.)."""
+        trainable = set()
+        for name, param in self.model.named_parameters():
+            if param.requires_grad:
+                trainable.update(fqn.replace("base_layer.", "") for fqn in _get_fqns(self.model, name))
+        missing = trainable - model_state_dict.keys()
+        if missing:
+            raise KeyError(f"trainable params missing from the model state dict: {sorted(missing)[:5]}")
+        return {key: value for key, value in model_state_dict.items() if key in trainable}
+    # END CLAUDE GENERATED
 
     def _get_checkpoint_optimizers(self) -> list[Optimizer]:
         """Expose optimizers keyed by their model parameters for DCP."""
@@ -84,6 +122,8 @@ class AppState(Stateful):
         # Automatically manages FSDP FQN's, as well as sets the default state dict type to FSDP.SHARDED_STATE_DICT
         checkpoint_optimizers = self._get_checkpoint_optimizers()
         model_state_dict, optimizer_state_dict = get_state_dict(self.model, checkpoint_optimizers)
+        if self.trainable_only:  # CLAUDE GENERATED (trainable_only), DJ DOES NOT APPROVE, MUST BE REVISED
+            model_state_dict = self._trainable_only_model_state(model_state_dict)
         # Runtime fusions own one physical state tensor per fused parameter; the checkpoint
         # sees it under the canonical names. This dict is also the template dcp_load writes
         # into, and load_state_dict packs the loaded entries back into the runtime state.
@@ -125,7 +165,9 @@ class AppState(Stateful):
             # detaching optim.state from the tensors we just populated. So we only
             # apply the model side here and flip the wrappers to initialized so
             # subsequent steps take the steady-state path.
-            set_model_state_dict(self.model, model_state_dict=state_dict["model"])
+            set_model_state_dict(
+                self.model, model_state_dict=state_dict["model"], options=self.options  # CLAUDE GENERATED (trainable_only), DJ DOES NOT APPROVE, MUST BE REVISED
+            )
             # The template only aliases a packed parameter's state where the packing
             # dimension is unsharded, so the loaded logical entries are packed back in.
             write_back_loaded_packed_optimizer_state(self.model, checkpoint_optimizers, state_dict["optimizers"])
@@ -143,6 +185,7 @@ class AppState(Stateful):
                 optim_state_dict=join_loaded_optimizer_state_for_runtime(
                     self.model, state_dict["optimizers"], runtime_optimizer_state_dict
                 ),
+                options=self.options,  # CLAUDE GENERATED (trainable_only), DJ DOES NOT APPROVE, MUST BE REVISED
             )
 
         if self.scheduler is not None:
@@ -194,7 +237,11 @@ class CheckpointManager:
         start_time = time.perf_counter()
 
         # Create checkpoint state
-        state_dict = {"app": AppState(model, optimizers, scheduler, progress)}
+        # CLAUDE GENERATED (trainable_only), DJ DOES NOT APPROVE, MUST BE REVISED
+        # Only worth it (and only marked) when something is frozen; otherwise a full checkpoint as before.
+        trainable_only = self.config.trainable_only and any(not p.requires_grad for p in model.parameters())
+        # END CLAUDE GENERATED
+        state_dict = {"app": AppState(model, optimizers, scheduler, progress, trainable_only=trainable_only)}
 
         # Checkpoint the local dataloader
         if dataloader is not None:
@@ -209,6 +256,10 @@ class CheckpointManager:
 
         # Save sharded state
         dcp_save(state_dict, checkpoint_id=path)
+        # CLAUDE GENERATED (trainable_only), DJ DOES NOT APPROVE, MUST BE REVISED
+        if trainable_only and self.world.is_master:
+            (path / TRAINABLE_ONLY_MARKER).touch()
+        # END CLAUDE GENERATED
 
         self.logger.debug(f"Saved training checkpoint in {format_time(time.perf_counter() - start_time)}")
 
@@ -226,7 +277,10 @@ class CheckpointManager:
         start_time = time.perf_counter()
 
         # Load sharded state
-        app_state = AppState(model, optimizers if not self.skip_optimizer else [], scheduler, progress)
+        trainable_only = is_trainable_only_checkpoint(path)  # CLAUDE GENERATED (trainable_only), DJ DOES NOT APPROVE, MUST BE REVISED
+        app_state = AppState(
+            model, optimizers if not self.skip_optimizer else [], scheduler, progress, trainable_only=trainable_only
+        )
         state_dict = {"app": app_state}
         dcp_load(state_dict=state_dict, checkpoint_id=path)
         if self.skip_optimizer:
@@ -266,6 +320,12 @@ class CheckpointManager:
         if not ckpt_path.exists():
             raise FileNotFoundError(f"Checkpoint not found at {ckpt_path}")
         self.load_from_path(ckpt_path, model, optimizers, scheduler, progress, dataloader)
+
+    # CLAUDE GENERATED (trainable_only), DJ DOES NOT APPROVE, MUST BE REVISED
+    def resume_path(self, step: int, path: Path | None = None) -> Path:
+        """Where ``load`` reads the checkpoint for ``step`` from (``path`` overrides, as in ``load``)."""
+        return path if path is not None else self.get_ckpt_path(step)
+    # END CLAUDE GENERATED
 
     def save(
         self,

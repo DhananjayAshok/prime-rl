@@ -13,7 +13,11 @@ from prime_rl.utils.act_offloading import maybe_activation_offloading
 import torch
 import torch.distributed as dist
 from torch.profiler import profile, ProfilerActivity, record_function
-from prime_rl.trainer.ckpt import Progress, setup_ckpt_manager
+from prime_rl.trainer.ckpt import (  # CLAUDE GENERATED (is_trainable_only_checkpoint), DJ DOES NOT APPROVE, MUST BE REVISED
+    Progress,
+    is_trainable_only_checkpoint,
+    setup_ckpt_manager,
+)
 from prime_rl.trainer.optim import setup_optimizer
 from prime_rl.trainer.scheduler import setup_scheduler
 from prime_rl.configs.trainer import TrainerConfig
@@ -137,6 +141,13 @@ def train(config: TrainerConfig):
     logger.info(f"Initializing model ({config.model})")
     t0 = time.perf_counter()
     loading_from_ckpt_later = checkpoint_step is not None
+    # CLAUDE GENERATED (trainable_only), DJ DOES NOT APPROVE, MUST BE REVISED
+    if loading_from_ckpt_later:
+        resume_dir = config.resume.dir if config.resume else None
+        resume_path = ckpt_manager.resume_path(checkpoint_step, resume_dir / "trainer" if resume_dir else None)
+        # A trainable-only checkpoint has no frozen base weights: load those from HF, the checkpoint on top.
+        loading_from_ckpt_later = not is_trainable_only_checkpoint(resume_path)
+    # END CLAUDE GENERATED
     model = setup_model(config.model, parallel_dims, loading_from_ckpt_later)
     logger.debug(f"Initialized model in {format_time(time.perf_counter() - t0)}")
 

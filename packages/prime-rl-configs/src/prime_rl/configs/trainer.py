@@ -521,6 +521,13 @@ class CheckpointConfig(BaseConfig):
     skip_optimizer: bool = False
     """Skip loading the optimizer state from checkpoint."""
 
+    # CLAUDE GENERATED (trainable_only), DJ DOES NOT APPROVE, MUST BE REVISED
+    trainable_only: bool = True
+    """When some parameters are frozen (e.g. LoRA), save only the trainable ones with the optimizer, scheduler,
+    progress and dataloader state; the frozen base weights are reloaded from the HF model on resume. With nothing
+    frozen (full fine-tuning) the checkpoint is a full one either way. False always saves every parameter."""
+    # END CLAUDE GENERATED
+
 
 class IPOLossConfig(BaseConfig):
     type: Literal["ipo"] = "ipo"
